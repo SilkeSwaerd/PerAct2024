@@ -41,7 +41,7 @@ participant_dialog.addField("What is your gender?", choices=["Woman", "Non-Binar
 participant_dialog.addField("Write the name of your country of Origin")
 participant_dialog.addField("Write the name of your native language, in case of bilinguism: the language you use most often.")
 participant_dialog.addField("Do you regularly play an instrument or sing?", choices=["Yes", "No"])
-participant_dialog.addField("Write the number of years of formal musical training you have received:"])
+participant_dialog.addField("Write the number of years of formal musical training you have received:")
 participant_dialog.addField("Have you started your formal musical education before the age of 7?", choices=["Yes", "No"])
 participant_dialog.show()
 
