@@ -27,7 +27,7 @@ else:
 
 # Set beat interval based on frequency choice
 if frequency_choice == "Fast":
-    beat_interval = 0.4  # 500ms for fast
+    beat_interval = 0.4  # 400ms for fast
     offset = 0.1 #Offset to use to syncronise circle pulsation and auditory one
 else:
     beat_interval = 0.8  # 800ms for slow
