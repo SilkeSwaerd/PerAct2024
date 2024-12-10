@@ -1,7 +1,7 @@
 ---
 title: "PerAct_Exam"
-author: "Zofia Radwańska"
-date: "2024-12-09"
+author: "Zofia Radwańska, Silke Swärd, Valeria Alladio"
+date: "2025-01-06"
 output: html_document
 ---
 
@@ -110,6 +110,25 @@ ggplot(df_plot, aes(timestamp, time, color = condition)) +
 ggplot(df_plot, aes(timestamp, time, color = participant_id)) +
   geom_point() +
   geom_line()
+
+#time difference against the timeline for each participant (separately)
+participant_plots <- lapply(unique(df_plot$participant_id), function(id) {
+  ggplot(df_plot %>% filter(participant_id == id),
+         aes(x = timestamp, y = time, color = as.factor(participant_id))) +
+    geom_point() +
+    geom_line() +
+    theme_minimal() +
+    labs(
+      title = paste("Participant", id),
+      x = "Timestamp",
+      y = "Time Between Taps"
+    ) +
+    theme(legend.position = "none")
+})
+
+##individual plots
+participant_plots[[19]]  # checking the plot by participant id
+
 ```
 
 ##Data cleaning
@@ -136,7 +155,7 @@ df_vis_fast <- data %>%
   filter(condition %in% "vis_fast")
 ```
 
-Participant statistics 
+##Participant statistics 
 ```{r}
 
 df <- list.files(path = "C:/Users/silke/OneDrive/Skrivbord/Aarhus Universitet/2024-2025/HT24/Perception and Action/PerAct Paper/Perc_Act_csv", full.names = TRUE) %>% 
