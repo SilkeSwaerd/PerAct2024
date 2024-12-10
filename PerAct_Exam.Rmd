@@ -1,0 +1,143 @@
+---
+title: "PerAct_Exam"
+author: "Zofia Radwańska"
+date: "2024-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# downloading the packages 
+library(pacman)
+pacman::p_load(tidyverse, dplyr)
+```
+
+#PREPROCESSING OF THE DATA
+
+##Editing of the csv's: participant id & time difference between taps
+```{r}
+#adding participant ids to the csv's
+
+#folder path
+data_folder <- "/Users/zofiaradwanska/Desktop/Perception and Action/Exam/Perc_Act_csv"
+
+csv_files <- list.files(path = data_folder, pattern = "*.csv", full.names = TRUE)
+
+#vector for participant ids
+participant_ids <- paste0(seq_along(csv_files))
+
+#loop through files to add participant id and times as columns
+for (i in seq_along(csv_files)) {
+  #reading the csv files
+  df <- read.csv(csv_files[i])
+  
+  #adding a column with participant id
+  df$participant_id <- participant_ids[i]
+  
+  #creating a column with times between events
+  df$time <- c(NA, diff(df$time))
+  
+  #saving the files
+  write.csv(df, csv_files[i], row.names = FALSE)
+  print(paste("Updated and saved file:", csv_files[i]))
+}
+
+```
+
+##Editing of the data frame
+```{r}
+df <- list.files(path = "/Users/zofiaradwanska/Desktop/Perception and Action/Exam/Perc_Act_csv", full.names = TRUE) %>% 
+  lapply(read_csv) %>%
+  bind_rows
+
+str(df)
+df$participant_id <- as.factor(df$participant_id)
+
+#changing the variable names
+df$task_type <- ifelse(df$task_type == "Metronome", "aud",
+                ifelse(df$task_type == "Visual Pulsation", "vis",
+                ifelse(df$task_type == "Both", "multi", df$task_type)))
+
+df$frequency <- ifelse(df$frequency == "Slow", "slow",
+                ifelse(df$frequency == "Fast", "fast", df$frequency))
+
+df$event <- ifelse(df$event == "second_tapping_keypress", "after_stim",
+            ifelse(df$event == "first_tapping_keypress", "before_stim", df$event))
+
+#adding a condition column
+df <- df %>% 
+  mutate(condition = paste(task_type, frequency, sep = "_"))
+
+#deleting the time difference for the first tap in second tapping condition (the inaccurate time recording)
+df <- df %>%
+  group_by(participant_id) %>% 
+  mutate(
+    is_first_after = event == "after_stim" & row_number() == which(event == "after_stim")[1], #marking the first after_stim tap
+    time = ifelse(is_first_after, NA, time)
+  ) %>%
+  ungroup() %>% 
+  select(-is_first_after)
+```
+
+##Data inspection
+```{r}
+#initial data inspection
+df_dirty_summary <- df %>%
+  group_by(condition, event) %>%
+  filter(!event %in% c("image_description", "pulsation")) %>% 
+  summarize(
+    mean_tempo = mean(time, na.rm = TRUE),
+    median_tempo = median(time, na.rm = TRUE),
+    min_tempo = min(time, na.rm = TRUE),
+    max_tempo = max(time, na.rm = TRUE),
+    sd_tempo = sd(time, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+#visual inspection
+df_plot <- df %>%  #df for plotting (only the tapping times are included)
+  filter(!event %in% c("pulsation", "image_description"))
+
+#time differences against timeline for each condition
+ggplot(df_plot, aes(timestamp, time, color = condition)) +
+  geom_point() +
+  geom_line()
+
+#time difference against the timeline for each participant
+ggplot(df_plot, aes(timestamp, time, color = participant_id)) +
+  geom_point() +
+  geom_line()
+```
+
+##Data cleaning
+```{r}
+#removal of participant 29 -> didn't understand the instructions
+data <- df %>% 
+  filter(!participant_id %in% 29)
+
+#summary of the time differences
+data_sum <- data %>% 
+  group_by(participant_id, event, condition) %>% 
+  filter(!event %in% c("image_description")) %>% 
+  summarize(
+    mean_tempo = mean(time, na.rm = TRUE),
+    median_tempo = median(time, na.rm = TRUE),
+    min_tempo = min(time, na.rm = TRUE),
+    max_tempo = max(time, na.rm = TRUE),
+    sd_tempo = sd(time, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+df_vis_fast <- data %>% 
+  filter(participant_id)
+  filter(condition %in% "vis_fast")
+```
+
+
+
+#DATA ANALYSIS
+
+
