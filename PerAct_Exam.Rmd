@@ -136,7 +136,67 @@ df_vis_fast <- data %>%
   filter(condition %in% "vis_fast")
 ```
 
+Participant statistics 
+```{r}
 
+df <- list.files(path = "C:/Users/silke/OneDrive/Skrivbord/Aarhus Universitet/2024-2025/HT24/Perception and Action/PerAct Paper/Perc_Act_csv", full.names = TRUE) %>% 
+  lapply(read_csv) %>%
+  bind_rows
+
+#mean age
+mean_age = mean(df$participant_age)
+print(paste("Mean age:", mean_age))
+
+#sd age
+sd_age = sd(df$participant_age)
+print(paste("sd age:", sd_age))
+
+#total number of languages 
+nr_lang = length(unique(df$l1))
+print(paste("Number of L1:", nr_lang))
+
+#total number of native countries
+native_country = length(unique(df$country))
+print(paste("Number of nationalities:", native_country))
+
+#new df with only ID and l1
+df_w_lang <- df %>% group_by(participant_id) %>% summarise(l1 = first(l1)) 
+print(df_w_lang)
+
+#counting how many speakers there are of each language
+nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
+nr_speaker
+
+#separating those with musical training 
+df_music <- df %>% filter (musical_experience == "Yes") %>% mutate(formal_education = as.numeric(formal_education))
+
+#finding out how many had musical training
+part_music <- length(unique(df_music$participant_id))
+part_music
+
+#mean of years of training 
+mean_training = mean(df_music$formal_education, na.rm = TRUE)
+mean_training
+print(paste("Mean years of training", mean_training))
+
+sd_train = sd(df_music$formal_education, na.rm = TRUE)
+sd_train
+
+#separating gender
+df_gend <- df %>% group_by(participant_id) %>% summarise(gender = first(gender))
+
+#counting genders 
+nr_gend <- df_gend %>% group_by(gender) %>% summarise(count = n())
+nr_gend
+  
+#new df with only ID and l1
+df_w_lang <- df %>% group_by(participant_id) %>% summarise(l1 = first(l1)) 
+print(df_w_lang)
+
+#counting how many speakers there are of each language
+nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
+nr_speaker
+```
 
 #DATA ANALYSIS
 
