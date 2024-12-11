@@ -1,7 +1,12 @@
 ---
 title: "PerAct_Exam"
+<<<<<<< Updated upstream
 author: "Zofia Radwańska, Silke Swärd, Valeria Alladio"
 date: "2025-01-06"
+=======
+author: "Zofia Radwańska"
+date: "2024-12-09"
+>>>>>>> Stashed changes
 output: html_document
 ---
 
@@ -110,6 +115,7 @@ ggplot(df_plot, aes(timestamp, time, color = condition)) +
 ggplot(df_plot, aes(timestamp, time, color = participant_id)) +
   geom_point() +
   geom_line()
+<<<<<<< Updated upstream
 
 #time difference against the timeline for each participant (separately)
 participant_plots <- lapply(unique(df_plot$participant_id), function(id) {
@@ -129,6 +135,8 @@ participant_plots <- lapply(unique(df_plot$participant_id), function(id) {
 ##individual plots
 participant_plots[[19]]  # checking the plot by participant id
 
+=======
+>>>>>>> Stashed changes
 ```
 
 ##Data cleaning
@@ -155,6 +163,7 @@ df_vis_fast <- data %>%
   filter(condition %in% "vis_fast")
 ```
 
+<<<<<<< Updated upstream
 ##Participant statistics 
 ```{r}
 
@@ -216,6 +225,9 @@ print(df_w_lang)
 nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
 nr_speaker
 ```
+=======
+
+>>>>>>> Stashed changes
 
 #DATA ANALYSIS
 
