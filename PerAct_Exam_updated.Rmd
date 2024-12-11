@@ -1,0 +1,323 @@
+---
+title: "PerAct_Exam"
+author: "Zofia Radwańska"
+date: "2024-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# downloading the packages 
+library(pacman)
+pacman::p_load(tidyverse, dplyr)
+```
+
+#PREPROCESSING OF THE DATA
+
+##Editing of the csv's: participant id & time difference between taps
+```{r}
+#adding participant ids to the csv's
+
+#folder path
+data_folder <- "/Users/zofiaradwanska/Desktop/PerAct_Exam/Perc_Act_csv"
+
+csv_files <- list.files(path = data_folder, pattern = "*.csv", full.names = TRUE)
+
+#vector for participant ids
+participant_ids <- paste0(seq_along(csv_files))
+
+#loop through files to add participant id and tempos as columns
+for (i in seq_along(csv_files)) {
+  #reading the csv files
+  df <- read.csv(csv_files[i])
+  
+  #adding a column with participant id
+  df$participant_id <- participant_ids[i]
+  
+  #creating a column with times between events
+  df$tempo <- c(NA, diff(df$timestamp))
+  
+  #saving the files
+  write.csv(df, csv_files[i], row.names = FALSE)
+  print(paste("Updated and saved file:", csv_files[i]))
+}
+
+```
+
+##Editing of the data frame
+```{r}
+#downloading the data
+
+##csv files with participants' responses
+df <- list.files(path = "/Users/zofiaradwanska/Desktop/PerAct_Exam/Perc_Act_csv", full.names = TRUE) %>% 
+  lapply(read_csv) %>%
+  bind_rows
+
+str(df)
+df$participant_id <- as.factor(df$participant_id)
+
+##mood questionaire
+bmis <- read.csv("/Users/zofiaradwanska/Desktop/PerAct_Exam/The Brief Mood Introspection Scale (BMIS).csv")
+colnames(bmis)[2] <- "participant_id" #changing the column name so it matches the df
+
+str(bmis)
+###factorising the mood answers into 4-level variables
+bmis <- bmis %>%
+  mutate(across(c(Lively, Sad, Tired, Caring, Content, Gloomy, Jittery, Drowsy, Grouchy, Peppy, Nervous, Calm, Loving, Fed.up, Active), ~factor(., levels = c("Definitely do not feel", "Do not feel", "Slightly feel", "Definitely feel"))))
+
+#merging the dfs into one
+df <- merge(df, bmis, by = "participant_id")
+
+#changing the variable names
+df$task_type <- ifelse(df$task_type == "Metronome", "aud",
+                ifelse(df$task_type == "Visual Pulsation", "vis",
+                ifelse(df$task_type == "Both", "multi", df$task_type)))
+
+df$frequency <- ifelse(df$frequency == "Slow", "slow",
+                ifelse(df$frequency == "Fast", "fast", df$frequency))
+
+df$event <- ifelse(df$event == "second_tapping_keypress", "after_stim",
+            ifelse(df$event == "first_tapping_keypress", "before_stim", df$event))
+
+#adding a condition column
+df <- df %>% 
+  mutate(condition = paste(task_type, frequency, sep = "_"))
+
+#deleting the time difference for the first tap in second tapping condition (the inaccurate time recording)
+df <- df %>%
+  group_by(participant_id) %>% 
+  mutate(
+    is_first_after = event == "after_stim" & row_number() == which(event == "after_stim")[1], #marking the first after_stim tap
+    tempo = ifelse(is_first_after, NA, tempo)
+  ) %>%
+  ungroup() %>% 
+  select(-is_first_after)
+```
+
+##Data inspection
+```{r}
+#general summary of the data 
+summary(df)
+
+#initial data inspection (by conditions)
+df_dirty_summary <- df %>%
+  group_by(condition, event) %>%
+  filter(!event %in% c("image_description", "pulsation")) %>% 
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    median_tempo = median(tempo, na.rm = TRUE),
+    min_tempo = min(tempo, na.rm = TRUE),
+    max_tempo = max(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+```
+
+### Visual inspection
+```{r}
+
+##before_stim tempos
+a <- df %>% 
+  filter(event %in% "before_stim") 
+
+boxplot(tempo ~ condition, data = a) 
+boxplot(tempo ~ participant_id, data = a) 
+
+hist(a$tempo, breaks = 1000)
+plot(density(a$tempo, na.rm = TRUE))
+
+shapiro.test(a$tempo) #data is not normally distributed (p<0.05)
+qqnorm(a$tempo)
+
+##after_stim tempos
+b <- df %>% 
+  filter(event %in% "after_stim") 
+
+boxplot(tempo ~ condition, data = b) 
+boxplot(tempo ~ participant_id, data = b) 
+
+hist(b$tempo, breaks = 1000)
+plot(density(b$tempo, na.rm = TRUE))
+
+shapiro.test(b$tempo) #data is not normally distributed (p<0.05)
+qqnorm(b$tempo)
+
+## big difference in distribution of means and medians between before and after stimulus tempos
+## the tempos after stimulus are much more distributed -> some effect of conditions
+
+df_plot <- df %>%  #df for plotting (only the tapping tempos are included)
+  filter(!event %in% c("pulsation", "image_description"))
+
+#tempo differences against timeline for each condition
+ggplot(df_plot, aes(timestamp, tempo, color = condition)) +
+  geom_point() +
+  geom_line()
+
+#time difference against the timeline for participants
+ggplot(df_plot, aes(timestamp, tempo , color = participant_id)) +
+  geom_point() +
+  geom_line()
+
+#time difference against the timeline for each participant (separately)
+participant_plots <- lapply(unique(df_plot$participant_id), function(id) {
+  ggplot(df_plot %>% filter(participant_id == id),
+         aes(x = timestamp, y = tempo, color = as.factor(participant_id))) +
+    geom_point() +
+    geom_line() +
+    theme_minimal() +
+    labs(
+      title = paste("Participant", id),
+      x = "timestamp",
+      y = "Time Between Taps"
+    ) +
+    theme(legend.position = "none")
+})
+
+##individual plots
+participant_plots[[22]]  # checking the plot by participant id
+
+
+```
+
+##Data cleaning
+```{r}
+#removal of participant 29 -> didn't understand the instructions
+#removal of participant 35 ->lack of questionnaire responses
+data <- df %>% 
+  filter(!participant_id %in% c(29, 35))
+
+#summary of the time differences
+data_sum <- data %>% 
+  group_by(participant_id, event, condition) %>% 
+  filter(!event %in% c("image_description")) %>% 
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    median_tempo = median(tempo, na.rm = TRUE),
+    min_tempo = min(tempo, na.rm = TRUE),
+    max_tempo = max(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+#identification of extreme values (outliers)
+outliers <- data %>%
+  group_by(participant_id, event) %>%
+  filter(event %in% c("before_stim", "after_stim")) %>% 
+  filter(tempo < quantile(tempo, 0.25, na.rm = TRUE) - 1.5 * IQR(tempo, na.rm = TRUE) |
+         tempo > quantile(tempo, 0.75, na.rm = TRUE) + 1.5 * IQR(tempo, na.rm = TRUE))
+print(outliers)
+
+#removal of outliers
+cleaned_data <- data %>%
+  anti_join(outliers, by = c("participant_id", "event", "tempo"))
+```
+### Inspection of clean data
+```{r}
+df_clean_summary <- cleaned_data %>%
+  group_by(condition, event) %>%
+  filter(!event %in% c("image_description", "pulsation")) %>% 
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    median_tempo = median(tempo, na.rm = TRUE),
+    min_tempo = min(tempo, na.rm = TRUE),
+    max_tempo = max(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+```
+
+### Visualisation of clean data
+```{r}
+##before_stim clean data
+a_clean <- cleaned_data %>% 
+  filter(event %in% "before_stim") 
+
+boxplot(tempo ~ condition, data = a_clean) 
+boxplot(tempo ~ participant_id, data = a_clean) 
+
+hist(a_clean$tempo, breaks = 1000)
+plot(density(a_clean$tempo, na.rm = TRUE))
+
+shapiro.test(a_clean$tempo) #data is not normally distributed (p<0.05)
+qqnorm(a_clean$tempo)
+
+##after_stim clean data
+b_clean <- cleaned_data %>% 
+  filter(event %in% "after_stim") 
+
+boxplot(tempo ~ condition, data = b_clean) 
+boxplot(tempo ~ participant_id, data = b_clean) 
+
+hist(b_clean$tempo, breaks = 1000)
+plot(density(b_clean$tempo, na.rm = TRUE))
+
+shapiro.test(b_clean$tempo) #data is not normally distributed (p<0.05)
+qqnorm(b_clean$tempo)
+
+
+```
+
+##Participant statistics 
+```{r}
+#mean age
+mean_age = mean(df$participant_age)
+print(paste("Mean age:", mean_age))
+
+#sd age
+sd_age = sd(df$participant_age)
+print(paste("sd age:", sd_age))
+
+#total number of languages 
+nr_lang = length(unique(df$l1))
+print(paste("Number of L1:", nr_lang))
+
+#total number of native countries
+native_country = length(unique(df$country))
+print(paste("Number of nationalities:", native_country))
+
+#new df with only ID and l1
+df_w_lang <- df %>% group_by(participant_id) %>% summarise(l1 = first(l1)) 
+print(df_w_lang)
+
+#counting how many speakers there are of each language
+nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
+nr_speaker
+
+#separating those with musical training 
+df_music <- df %>% filter (musical_experience == "Yes") %>% mutate(formal_education = as.numeric(formal_education))
+
+#finding out how many had musical training
+part_music <- length(unique(df_music$participant_id))
+part_music
+
+#mean of years of training 
+mean_training = mean(df_music$formal_education, na.rm = TRUE)
+mean_training
+print(paste("Mean years of training", mean_training))
+
+sd_train = sd(df_music$formal_education, na.rm = TRUE)
+sd_train
+
+#separating gender
+df_gend <- df %>% group_by(participant_id) %>% summarise(gender = first(gender))
+
+#counting genders 
+nr_gend <- df_gend %>% group_by(gender) %>% summarise(count = n())
+nr_gend
+  
+#new df with only ID and l1
+df_w_lang <- df %>% group_by(participant_id) %>% summarise(l1 = first(l1)) 
+print(df_w_lang)
+
+#counting how many speakers there are of each language
+nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
+nr_speaker
+```
+
+#DATA ANALYSIS
+
+
