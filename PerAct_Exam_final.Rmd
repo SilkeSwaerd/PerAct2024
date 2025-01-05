@@ -1,0 +1,998 @@
+---
+title: "PerAct_Exam"
+author: "Zofia Radwańska"
+date: "2024-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# downloading the packages 
+library(pacman)
+pacman::p_load(tidyverse, dplyr, car, purrr, tidyr, knitr)
+```
+
+#PREPROCESSING OF THE DATA
+
+##Editing of the csv's: participant id & time difference between taps
+```{r}
+#adding participant ids to the csv's
+
+#folder path
+data_folder <- "/Users/zofiaradwanska/Desktop/PerAct_Exam/Perc_Act_csv"
+
+csv_files <- list.files(path = data_folder, pattern = "*.csv", full.names = TRUE)
+
+#vector for participant ids
+participant_ids <- paste0(seq_along(csv_files))
+
+#loop through files to add participant id and tempos as columns
+for (i in seq_along(csv_files)) {
+  #reading the csv files
+  df <- read.csv(csv_files[i])
+  
+  #adding a column with participant id
+  df$participant_id <- participant_ids[i]
+  
+  #creating a column with times between events
+  df$tempo <- c(NA, diff(df$timestamp))
+  
+  #saving the files
+  write.csv(df, csv_files[i], row.names = FALSE)
+  #print(paste("Updated and saved file:", csv_files[i]))
+}
+
+```
+
+##Editing of the data frame
+```{r}
+#downloading the data
+
+##csv files with participants' responses
+df <- list.files(path = "/Users/zofiaradwanska/Desktop/PerAct_Exam/Perc_Act_csv", full.names = TRUE) %>% 
+  lapply(read_csv) %>%
+  bind_rows
+
+###changing the variable type
+df$event <- as.factor(df$event)
+df$frequency <- as.factor(df$frequency)
+df$task_type <- as.factor(df$task_type)
+df$condition <- as.factor(df$condition)
+df$early_trained <- as.logical(df$early_trained)
+df$musical_experience <- as.logical(df$musical_experience)
+df$gender <- as.factor(df$gender)
+df$country <- as.factor(df$country)
+df$l1 <- as.factor(df$l1)
+df$participant_id <- as.factor(df$participant_id)
+
+str(df)
+
+##mood questionaire
+bmis <- read.csv("/Users/zofiaradwanska/Desktop/PerAct_Exam/The Brief Mood Introspection Scale (BMIS).csv")
+colnames(bmis)[2] <- "participant_id" #changing the column name so it matches the df
+
+str(bmis)
+###factorising the mood answers into 4-level variables
+bmis <- bmis %>%
+  mutate(across(c(Lively, Sad, Tired, Caring, Content, Gloomy, Jittery, Drowsy, Grouchy, Peppy, Nervous, Calm, Loving, Fed.up, Active), ~factor(., levels = c("Definitely do not feel", "Do not feel", "Slightly feel", "Definitely feel"))))
+
+#merging the dfs into one
+df <- merge(df, bmis, by = "participant_id")
+
+#changing the variable names
+df$task_type <- ifelse(df$task_type == "Metronome", "aud",
+                ifelse(df$task_type == "Visual Pulsation", "vis",
+                ifelse(df$task_type == "Both", "multi", df$task_type)))
+
+df$frequency <- ifelse(df$frequency == "Slow", "slow",
+                ifelse(df$frequency == "Fast", "fast", df$frequency))
+
+df$event <- ifelse(df$event == "second_tapping_keypress", "after_stim",
+            ifelse(df$event == "first_tapping_keypress", "before_stim", df$event))
+
+#adding a condition column
+df <- df %>% 
+  mutate(condition = paste(task_type, frequency, sep = "_"))
+
+#deleting the time difference for the first tap in second tapping condition (the inaccurate time recording)
+df <- df %>%
+  group_by(participant_id) %>% 
+  mutate(
+    is_first_after = event == "after_stim" & row_number() == which(event == "after_stim")[1], #marking the first after_stim tap
+    tempo = ifelse(is_first_after, NA, tempo)
+  ) %>%
+  ungroup() %>% 
+  select(-is_first_after)
+
+#capitalising the languages
+df <- df %>%
+  mutate(l1 = str_to_title(l1))
+
+```
+
+##Data inspection
+```{r}
+#general summary of the data 
+summary(df)
+
+#initial data inspection (by conditions)
+df_dirty_summary <- df %>%
+  group_by(condition, event) %>%
+  filter(!event %in% c("image_description", "pulsation")) %>% 
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    median_tempo = median(tempo, na.rm = TRUE),
+    min_tempo = min(tempo, na.rm = TRUE),
+    max_tempo = max(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+```
+
+### Visual inspection
+```{r}
+
+##before_stim tempos
+a <- df %>% 
+  filter(event %in% "before_stim") 
+
+boxplot(tempo ~ condition, data = a) 
+boxplot(tempo ~ participant_id, data = a) 
+
+hist(a$tempo, breaks = 1000)
+plot(density(a$tempo, na.rm = TRUE))
+
+shapiro.test(a$tempo) #data is not normally distributed (p<0.05)
+qqnorm(a$tempo)
+
+##after_stim tempos
+b <- df %>% 
+  filter(event %in% "after_stim") 
+
+boxplot(tempo ~ condition, data = b) 
+boxplot(tempo ~ participant_id, data = b) 
+
+hist(b$tempo, breaks = 1000)
+plot(density(b$tempo, na.rm = TRUE))
+
+shapiro.test(b$tempo) #data is not normally distributed (p<0.05)
+qqnorm(b$tempo)
+
+## big difference in distribution of means and medians between before and after stimulus tempos
+## the tempos after stimulus are much more distributed -> some effect of conditions
+
+df_plot <- df %>%  #df for plotting (only the tapping tempos are included)
+  filter(!event %in% c("pulsation", "image_description"))
+
+#tempo differences against timeline for each condition
+ggplot(df_plot, aes(timestamp, tempo, color = condition)) +
+  geom_point() +
+  geom_line()
+
+#time difference against the timeline for participants
+ggplot(df_plot, aes(timestamp, tempo , color = participant_id)) +
+  geom_point() +
+  geom_line()
+
+#time difference against the timeline for each participant (separately)
+participant_plots <- lapply(unique(df_plot$participant_id), function(id) {
+  ggplot(df_plot %>% filter(participant_id == id),
+         aes(x = timestamp, y = tempo, color = as.factor(participant_id))) +
+    geom_point() +
+    geom_line() +
+    theme_minimal() +
+    labs(
+      title = paste("Participant", id),
+      x = "timestamp",
+      y = "Time Between Taps"
+    ) +
+    theme(legend.position = "none")
+})
+
+##individual plots
+participant_plots[[2]]  # checking the plot by participant id
+
+
+```
+
+##Data cleaning
+```{r}
+#removal of participant 29 -> didn't understand the instructions
+#removal of participant 35 ->lack of questionnaire responses
+data <- df %>% 
+  filter(!participant_id %in% c(29, 35))
+
+#summary of the time differences
+data_sum <- data %>% 
+  group_by(participant_id, event, condition) %>% 
+  filter(!event %in% c("image_description")) %>% 
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    median_tempo = median(tempo, na.rm = TRUE),
+    min_tempo = min(tempo, na.rm = TRUE),
+    max_tempo = max(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+#identification of extreme values (outliers)
+outliers <- data %>%
+  group_by(participant_id, event) %>%
+  filter(event %in% c("before_stim", "after_stim")) %>% 
+  filter(tempo < quantile(tempo, 0.25, na.rm = TRUE) - 1.5 * IQR(tempo, na.rm = TRUE) |
+         tempo > quantile(tempo, 0.75, na.rm = TRUE) + 1.5 * IQR(tempo, na.rm = TRUE))
+print(outliers)
+
+#removal of outliers
+cleaned_data <- data %>%
+  anti_join(outliers, by = c("participant_id", "event", "tempo"))
+```
+### Inspection of clean data
+```{r}
+df_clean_summary <- cleaned_data %>%
+  group_by(comparison, event) %>%
+  filter(!event %in% c("image_description", "pulsation")) %>% 
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    median_tempo = median(tempo, na.rm = TRUE),
+    min_tempo = min(tempo, na.rm = TRUE),
+    max_tempo = max(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"  # removes all standard grouping 
+  )
+
+#visualisation for primary analysis
+
+plot_data <- cleaned_data %>% 
+    filter(event %in% c("before_stim"))
+
+hist(plot_data$tempo, breaks = 100)
+plot(density(plot_data$tempo, na.rm = TRUE))
+
+
+
+median_tempo <- median(plot_data$tempo, na.rm = TRUE)
+mean_tempo <- mean(plot_data$tempo, na.rm = TRUE)
+
+# Create the plot
+ggplot(plot_data, aes(x = tempo)) +
+  geom_histogram(bins = 100, fill = "#9BCEFD", color = "white", alpha = 0.7) +
+
+  geom_vline(xintercept = median_tempo, color = "darkred", linetype = "dashed", size = 1) +
+  labs(title = "Distribution of pre-stimulus ITIs", 
+       x = "Inter-tap Intervals (sec)", y = "Frequency") +
+  annotate("text", x = median_tempo, y = 10, label = paste("Median:", round(median_tempo, 3)), color = "black", hjust = 1.1) +
+  theme_minimal()
+
+plot_primary_analysis <- 
+  ggplot(
+  plot_data, aes(x = event, y = tempo, colour = frequency)) +
+  geom_boxplot() +
+  geom_labs(
+    y_
+  )
+  
+```
+
+### Visualisation of clean data
+```{r}
+##before_stim clean data
+a_clean <- cleaned_data %>% 
+  filter(event %in% "before_stim") 
+
+boxplot(tempo ~ condition, data = a_clean) 
+boxplot(tempo ~ participant_id, data = a_clean) 
+
+hist(a_clean$tempo, breaks = 1000)
+plot(density(a_clean$tempo, na.rm = TRUE))
+
+shapiro.test(a_clean$tempo) #data is not normally distributed (p<0.05)
+qqnorm(a_clean$tempo)
+
+##after_stim clean data
+b_clean <- cleaned_data %>% 
+  filter(event %in% "after_stim") 
+
+boxplot(tempo ~ condition, data = b_clean) 
+boxplot(tempo ~ participant_id, data = b_clean) 
+
+hist(b_clean$tempo, breaks = 1000)
+plot(density(b_clean$tempo, na.rm = TRUE))
+
+shapiro.test(b_clean$tempo) #data is not normally distributed (p<0.05)
+qqnorm(b_clean$tempo)
+
+clean_df_plot <- cleaned_data %>% 
+  filter(event %in% c("before_stim", "after_stim"))
+
+#tempo differences against timeline for each condition
+ggplot(clean_df_plot, aes(timestamp, tempo, color = condition)) +
+  geom_point() +
+  geom_line()
+
+#time dcleaned_data#time difference against the timeline for participants
+ggplot(clean_df_plot, aes(timestamp, tempo , color = participant_id)) +
+  geom_point() +
+  geom_line()
+
+clean_participant_plots <- lapply(unique(clean_df_plot$participant_id), function(id) {
+  ggplot(df_plot %>% filter(participant_id == id),
+         aes(x = timestamp, y = tempo, color = as.factor(participant_id))) +
+    geom_point() +
+    geom_line() +
+    theme_minimal() +
+    labs(
+      title = paste("Participant", id),
+      x = "timestamp",
+      y = "Time Between Taps"
+    ) +
+    theme(legend.position = "none")
+})
+
+##individual plots
+clean_participant_plots[[2]]  # checking the plot by participant id
+
+#num 2 has some fucked up data point
+
+```
+
+##Participant statistics 
+```{r}
+#mean age
+mean_age = mean(df$participant_age)
+print(paste("Mean age:", mean_age))
+
+#sd age
+sd_age = sd(df$participant_age)
+print(paste("sd age:", sd_age))
+
+#total number of languages 
+nr_lang = length(unique(df$l1))
+print(paste("Number of L1:", nr_lang))
+
+#total number of native countries
+native_country = length(unique(df$country))
+print(paste("Number of nationalities:", native_country))
+
+#new df with only ID and l1
+df_w_lang <- df %>% group_by(participant_id) %>% summarise(l1 = first(l1)) 
+print(df_w_lang)
+
+#counting how many speakers there are of each language
+nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
+nr_speaker
+
+#separating those with musical training 
+df_music <- df %>% filter (musical_experience == "Yes") %>% mutate(formal_education = as.numeric(formal_education))
+
+#finding out how many had musical training
+part_music <- length(unique(df_music$participant_id))
+part_music
+
+#mean of years of training 
+mean_training = mean(df_music$formal_education, na.rm = TRUE)
+mean_training
+print(paste("Mean years of training", mean_training))
+
+sd_train = sd(df_music$formal_education, na.rm = TRUE)
+sd_train
+
+#separating gender
+df_gend <- df %>% group_by(participant_id) %>% summarise(gender = first(gender))
+
+#counting genders 
+nr_gend <- df_gend %>% group_by(gender) %>% summarise(count = n())
+nr_gend
+  
+#new df with only ID and l1
+df_w_lang <- df %>% group_by(participant_id) %>% summarise(l1 = first(l1)) 
+print(df_w_lang)
+
+#counting how many speakers there are of each language
+nr_speaker <- df_w_lang %>% group_by (l1) %>% summarise(count = n())
+nr_speaker
+
+```
+
+#DATA ANALYSIS
+
+##Extraction of participants with abnormal tempos (outside of expected normal tempo range)
+```{r}
+#tempo comparison for before_stim and pulsation events
+tempo_comp <- cleaned_data %>% 
+  filter(!event %in% "image_description") %>% 
+  group_by(participant_id, frequency, event) %>% 
+  summarise(mean_tempo = mean(tempo, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = event, values_from = mean_tempo) %>% 
+  group_by(frequency) %>%
+  #in case pulsation tempo was not recorded the mean for pulsation tempo within the frequency is used to compare
+  mutate(
+    pulsation = if_else(
+      is.na(pulsation),
+      mean(pulsation, na.rm = TRUE),
+      pulsation
+    )
+  ) %>%
+  ungroup()
+
+pulsation_mean <- tempo_comp %>% 
+  group_by(frequency) %>% 
+  summarise(mean_pulsation = mean(pulsation, na.rm = TRUE))
+
+#creating a column for classification of the tempo comparisons
+tempo_comp <- tempo_comp %>% 
+  mutate(comparison = ifelse(before_stim > pulsation, "slower", "faster"))
+
+#merging the dfs to add the column to primary cleaned df
+cleaned_data <- cleaned_data %>% 
+  left_join(tempo_comp %>% select(participant_id, frequency, comparison),
+            by = c("participant_id", "frequency"))
+
+##slower than slow: 18 & 27
+##faster than fast: 2
+```
+
+##Calculating the change between pre-stimulus and post_stimulus tempos
+```{r}
+#normalised tempo change between pre and post stimulus tapping (MEDIAN)
+normalised_tempo_median <- cleaned_data %>%
+  filter(event %in% c("before_stim", "after_stim")) %>%
+  group_by(participant_id, event, task_type, frequency, condition, comparison) %>%
+  summarise(median_tempo = median(tempo, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = event, values_from = c(median_tempo), names_prefix = "tempo_") %>%
+  mutate(median_difference = tempo_after_stim - tempo_before_stim, median_normalised_difference = (tempo_after_stim - tempo_before_stim) / tempo_before_stim)
+
+#normalised tempo change between pre and post stimulus tapping (MEAN)
+normalised_tempo_mean <- cleaned_data %>%
+  filter(event %in% c("before_stim", "after_stim")) %>%
+  group_by(participant_id, event, task_type, frequency, condition, comparison) %>%
+  summarise(mean_tempo = mean(tempo, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = event, values_from = c(mean_tempo), names_prefix = "tempo_") %>%
+  mutate(mean_difference = tempo_after_stim - tempo_before_stim, mean_normalised_difference = (tempo_after_stim - tempo_before_stim) / tempo_before_stim)
+
+
+normalised_tempo <- normalised_tempo_median %>% 
+  left_join(normalised_tempo_mean %>% select(participant_id, task_type, frequency, condition, comparison, mean_difference, mean_normalised_difference),
+            by = c("participant_id", "task_type", "frequency", "condition", "comparison"))
+
+# responses with a "-" -> participant became faster
+# responses without a "-" -> participant became slower
+```
+##SMT analysis
+```{r}
+kruskal.test(tempo_before_stim ~ participant_id, data = normalised_tempo) #p-value = 0.4673
+
+#no significant difference between the participants' SMTs
+
+mean(normalised_tempo$tempo_before_stim)
+median(normalised_tempo$tempo_before_stim)
+min(normalised_tempo$tempo_before_stim)
+max(normalised_tempo$tempo_before_stim)
+
+```
+
+
+###Summary of tempo differences
+```{r}
+normalised_difference_sum <- normalised_tempo %>% 
+  group_by(comparison) %>% 
+  summarise(mean = mean(median_normalised_difference), sd = sd(median_normalised_difference))
+```
+
+
+###Testing for normal distribution of tempo differences
+```{r}
+# tempo median difference -> normal distribution
+shapiro.test(normalised_tempo$median_normalised_difference) #p-value = 0.08488 -> normal distribution
+shapiro.test(normalised_tempo$median_difference) #p-value = 0.07382 -> normal distribution
+
+# tempo mean difference -> non normal distribution
+shapiro.test(normalised_tempo$mean_normalised_difference) #p-value = 0.03619 -> non normal distribution
+shapiro.test(normalised_tempo$mean_difference) #p-value = 0.01267 -> non normal distribution
+
+## regardless of the results median probably better to use -> skewed data distribution
+```
+
+##H1: The auditory stimuli will influence the spontaneous motor tempo more than the visual stimuli. 
+
+###Assumption testing: two-way ANOVA -> all conditions are normally distributed and have homogenous variance
+```{r}
+#distribution of tempo differences within each conditon
+
+frequency_diff_distribution <- normalised_tempo %>% 
+  group_by(frequency) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value)
+  )
+## fast: p value = 0.1069100	-> normal distribution
+## slow: p value = 0.1922093	-> normal distribution
+
+comparison_diff_distribution <- normalised_tempo %>% 
+  group_by(comparison) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value)
+  )
+## faster: p value = 0.2832534	-> normal distribution
+## slower: p value = 0.2258640	-> normal distribution
+
+task_type_diff_distribution <- normalised_tempo %>% 
+  group_by(task_type) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value)
+  )
+## aud: p value = 0.09689013 -> normal distribution
+## vis: p value = 0.51504719 -> normal distribution
+## multi: p value = 0.89202689 -> normal distribution
+
+condition_diff_distribution <- normalised_tempo %>% 
+  group_by(condition) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value)
+  )
+## aud_fast: p value = 0.6562552	-> normal distribution
+## aud_slow: p value =	0.1551331	-> normal distribution
+## multi_fast: p value =	0.3878939	-> normal distribution
+## multi_slow: p value =	0.5107778	-> normal distribution
+## vis_fast: p value =	0.2649088	-> normal distribution
+## vis_slow: p value = 0.5639413	-> normal distribution
+
+comp_task_diff_distribution <- normalised_tempo %>% 
+  group_by(comparison, task_type) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value)
+  )
+## faster	aud: p value =	0.1551331	-> normal distribution
+## faster	multi: p value =	0.5107778	-> normal distribution
+## faster	vis: p value =	0.3454721	-> normal distribution
+## slower	aud: p value =	0.6562552	-> normal distribution
+## slower	multi: p value =	0.3878939	-> normal distribution
+## slower	vis:	 p value =	0.4573564	-> normal distribution
+
+#homogeneity of variance
+
+##frequency
+leveneTest(median_normalised_difference ~ frequency, normalised_tempo) #p value = 0.4006 -> homogeneity
+##comparison of pre stim and stim tempo
+leveneTest(median_normalised_difference ~ comparison, normalised_tempo) #p value = 0.3571 -> homogeneity
+##task_type
+leveneTest(median_normalised_difference ~ task_type, normalised_tempo) #p value = 0.09704 -> homogeneity
+##condition
+leveneTest(median_normalised_difference ~ condition, normalised_tempo) #p value = 0.6974 -> homogeneity
+##comparison of pre stim and stim tempo * task_type
+leveneTest(median_normalised_difference ~ comparison * task_type, normalised_tempo) #p value = 0.6864 -> homogeneity
+```
+
+###ANOVA -> generally significant results
+```{r}
+#frequency * task_type
+anova1 <- aov(median_normalised_difference ~ frequency * task_type, data = normalised_tempo)
+summary(anova1)
+
+#comparison * task_type
+anova2 <- aov(median_normalised_difference ~ comparison * task_type, data = normalised_tempo)
+summary(anova2)
+
+#condition
+anova3 <- aov(median_normalised_difference ~ condition, data = normalised_tempo)
+summary(anova3)
+
+normalised_tempo %>% 
+  filter(comparison %in% "slower") %>% 
+  group_by(task_type) %>% 
+  summarise(mean = mean(median_normalised_difference))
+```
+### Post-hoc testing
+```{r}
+#frequency * task_type
+TukeyHSD(anova1,
+  which = "task_type"
+) #no significant differences between task types
+
+TukeyHSD(anova1,
+  which = "frequency"
+) #significant difference
+
+#slow-fast: diff. 0.2169715; p value. 0.0008467
+#slow stim made people slower, fast stim faster
+#significant difference between tempo means
+
+TukeyHSD(anova1,
+  which = "frequency:task_type"
+)
+
+#comparison * task_type
+TukeyHSD(anova2,
+  which = "task_type"
+) #no significant differences between task types
+
+TukeyHSD(anova2,
+  which = "comparison"
+) #significant difference
+
+#slower-faster: diff. -0.1904536; p value. 0.0041571
+#the change for participants that were faster than stim in before_stim tapping was bigger than for slower participants
+
+TukeyHSD(anova2,
+  which = "comparison:task_type"
+)
+
+#condition
+TukeyHSD(anova3,
+  which = "condition"
+)
+
+#aud_slow-aud_fast: diff. 0.40740365; p value. 0.0143167
+#the only significant difference between conditions that is homogenous within the task_type category or frequency
+```
+
+
+##H2: The multimodal stimuli will influence the spontaneous motor tempo more than the unimodal stimuli. 
+
+## Visualisations
+```{r}
+ggplot(normalised_tempo, aes(frequency, median_normalised_difference, color = frequency)) +
+  geom_boxplot()
+
+ggplot(normalised_tempo, aes(comparison, median_normalised_difference, color = comparison)) +
+  geom_boxplot()
+
+ggplot(clean_df_plot, aes(condition, tempo, color = event)) +
+  geom_boxplot()
+
+#tempo on ITI
+
+
+# df for making plots
+plot_df <- normalised_tempo %>%
+  pivot_longer(
+    cols = starts_with("tempo_"),
+    names_to = "event",          
+    values_to = "tempo"         
+  ) %>%
+  mutate(
+    event = case_when(          
+      event == "tempo_before_stim" ~ "Before Stim",
+      event == "tempo_after_stim" ~ "After Stim"
+    ),
+    event = factor(event, levels = c("Before Stim", "After Stim")) 
+  )
+
+plot_df <- plot_df %>% #for making specific plots change the columns this df groups by
+  mutate(event = factor(event, levels = c("Before Stim", "After Stim"))) %>% #reorderung the events
+  group_by(event, comparison) %>%
+  summarize(
+    mean_tempo = mean(tempo, na.rm = TRUE),
+    sd_tempo = sd(tempo, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#plot (nno modality distinction)
+
+##frequency
+ggplot(plot_df, aes(x = event, y = mean_tempo, group = frequency, color = frequency)) +
+  geom_line(size = 1) + # Line connecting the points
+  geom_point(size = 3) + # Points for the medians
+  geom_errorbar(aes(ymin = mean_tempo - sd_tempo, ymax = mean_tempo + sd_tempo), width = 0.1) + # Error bars
+  scale_color_manual(
+    values = c("fast" = "#8B0000", "slow" = "#9BCEFD")  # Custom colors for 'faster' and 'slower'
+  ) +
+  labs(
+    title = "Before-after stimulus ITI change",
+    x = "Event",
+    y = "Inter-tap Intervals (sec)",
+    color = "Stimulus tempo"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+
+##comparison
+ggplot(plot_df, aes(x = event, y = mean_tempo, group = comparison, color = comparison)) +
+  geom_line(size = 1) + # Line connecting the points
+  geom_point(size = 3) + # Points for the medians
+  geom_errorbar(aes(ymin = mean_tempo - sd_tempo, ymax = mean_tempo + sd_tempo), width = 0.1) + # Error bars
+  scale_color_manual(
+    values = c("faster" = "#5D1809", "slower" = "#EDD096")  # Custom colors for 'faster' and 'slower'
+  ) +
+  labs(
+    title = "Before-after stimulus ITI change",
+    x = "Event",
+    y = "Inter-tap Intervals (sec)",
+    color = "Tempo comparison of stimulus and pre-stim tapping"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+
+#plot for each modality
+
+##comparison
+ggplot(plot_df, aes(x = event, y = mean_tempo, color = comparison, group = comparison)) +
+  geom_line(aes(group = interaction(comparison)), alpha = 0.9) + #line for each comparison group
+  geom_point(stat = "summary", fun = mean, size = 3) + #mean tempo for each group
+  geom_errorbar(aes(ymin = mean_tempo - sd_tempo, ymax = mean_tempo + sd_tempo), 
+                width = 0.2, size = 0.5
+  ) + #errorbars (sd) 
+  scale_color_manual(
+    values = c("faster" = "#5D1809", "slower" = "#EDD096")  # Custom colors for 'faster' and 'slower'
+  ) +
+  labs(
+    title = "ITIs Pre- and Post-Stimulus by Task Modality and Tempo Comparison",
+    x = "Event",
+    y = "Inter-tap Intervals (sec)",
+    color = "Tempo comparison of stimulus and pre-stim tapping"
+  ) +
+  facet_wrap(~task_type, labeller = as_labeller(c(
+    "aud" = "Auditory",
+    "multi" = "Bimodal",
+    "vis" = "Visual"
+  ))) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+
+##frequency
+ggplot(plot_df, aes(x = event, y = mean_tempo, color = frequency, group = frequency)) +
+  geom_line(aes(group = interaction(frequency)), alpha = 0.9) + #line for each comparison group
+  geom_point(stat = "summary", fun = mean, size = 3) + #mean tempo for each group
+  geom_errorbar(aes(ymin = mean_tempo - sd_tempo, ymax = mean_tempo + sd_tempo), 
+                width = 0.2, size = 0.5
+  ) + #errorbars (sd) 
+  scale_color_manual(
+    values = c("fast" = "#8B0000", "slow" = "#9BCEFD")  # Custom colors for 'faster' and 'slower'
+  ) +
+  labs(
+    title = "ITIs Pre- and Post-Stimulus by Task Modality and Tempo",
+    x = "Event",
+    y = "Inter-tap Intervals (sec)",
+    color = "Tempo comparison of stimulus and pre-stim tapping"
+  ) +
+  facet_wrap(~task_type, labeller = as_labeller(c(
+    "aud" = "Auditory",
+    "multi" = "Bimodal",
+    "vis" = "Visual"
+  ))) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+## Exploratory anlysis
+### Influence on the SMT (before-stim tempo)
+```{r}
+cleaned_data <- cleaned_data %>% 
+  mutate(musical_experience = ifelse(formal_education == 0, "F", "T")
+  )
+
+#normality testing
+##native language
+l1_distribution <- cleaned_data %>% 
+  filter(event %in% "before_stim") %>% 
+  group_by(l1) %>% 
+  summarise(shapiro_test = list(shapiro.test(tempo)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value))
+##all p values are significant -> no normal distribution
+
+##formal education
+years_ed_distribution <- cleaned_data %>% 
+  filter(event %in% "before_stim") %>% 
+  group_by(formal_education) %>% 
+  summarise(shapiro_test = list(shapiro.test(tempo)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value))
+##all p values are significant -> no normal distribution
+
+#mood -> nothing is normally distributed
+perform_shapiro_test <- function(cleaned_data, emotions) {
+  cleaned_data %>%
+    filter(event == "before_stim") %>%
+    group_by(across(all_of(emotions))) %>%
+    summarise(
+      shapiro_test = list(shapiro.test(tempo)),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      statistic = map_dbl(shapiro_test, ~ .x$statistic),
+      p_value = map_dbl(shapiro_test, ~ .x$p.value)
+    )
+}
+
+emotions <- c("Lively", "Sad", "Tired", "Caring", "Content", "Gloomy",
+                "Jittery", "Drowsy", "Grouchy", "Peppy", "Nervous", "Calm",
+                "Loving", "Fed.up", "Active")
+
+shapiro_results <- map(emotions, ~ perform_shapiro_test(cleaned_data, .x))
+names(shapiro_results) <- emotions
+
+#transformation of data to hopefully acquire normal distribution -> fale hopes
+cleaned_data <- cleaned_data %>% #does not help
+  mutate(log_tempo = log(tempo + 1)) 
+
+cleaned_data <- cleaned_data %>% #does not help either
+  mutate(sqrt_tempo = sqrt(tempo))
+
+#non parametric testing
+##native language
+kruskal.test(tempo ~ l1, data = cleaned_data, subset = (event == "before_stim")) #significatn difference between languages on the intial tempo
+pairwise.wilcox.test(cleaned_data$tempo[cleaned_data$event == "before_stim"], 
+                     g = cleaned_data$l1[cleaned_data$event == "before_stim"], 
+                     p.adjust.method = "bonferroni")
+
+##musical experience
+cleaned_data %>% #no records for musical experience in participant 23
+  filter(!is.na(musical_experience) & event == "before_stim") %>%
+  wilcox.test(tempo ~ musical_experience, data = .)#significant difference
+
+cleaned_data %>% filter(!is.na(musical_experience) & event == "before_stim") %>% 
+  group_by(musical_experience) %>% 
+  summarise(median = median(tempo, na.rm = TRUE), sd = sd(tempo, na.rm = TRUE), mean = mean(tempo, na.rm = TRUE))
+
+##formal training
+cor.test(cleaned_data$tempo[cleaned_data$event == "before_stim"], cleaned_data$formal_education[cleaned_data$event == "before_stim"], method = "spearman") #there is a correlation between the tempo and number of years in training
+### weak correlation (as the number of years increases the intertap interval decreases)
+### musicians tend to display faster tempos and smaller ITIs
+
+##mood (levels of emotinos as factors)
+kruskal_results <- map(emotions, function(var) {
+  kruskal.test(as.formula(paste("tempo ~", var)), data = cleaned_data, subset = (event == "before_stim"))
+})
+names(kruskal_results) <- emotions #groups of all emotions are significantly different
+
+post_hoc_results <- map(emotions, function(var) {
+  pairwise.wilcox.test(
+    cleaned_data$tempo[cleaned_data$event == "before_stim"],
+    cleaned_data[[var]][cleaned_data$event == "before_stim"],
+    p.adjust.method = "bonferroni"  # Adjust p-values for multiple comparisons
+  )
+})
+names(post_hoc_results) <- emotions
+
+cleaned_data %>% 
+  group_by(Jittery) %>% 
+  summarise(
+    median = median(tempo, na.rm = TRUE),
+    sd = sd(tempo, na.rm = TRUE)
+  )
+
+
+##mood(levels of emotions as a scale)
+
+scale_mapping <- c(
+  "Definitely do not feel" = 1,
+  "Do not feel" = 2,
+  "Slightly feel" = 3,
+  "Definitely feel" = 4
+)
+  
+mood_df <- cleaned_data %>% 
+  mutate(
+    across(
+      .cols = Lively:Active,
+      .fns = ~ scale_mapping[.]
+    )
+  )
+
+
+mood_results <- map(emotions, function(var){
+  cor.test(mood_df$tempo[mood_df$event == "before_stim"], 
+           mood_df[[var]][mood_df$event == "before_stim"], 
+           method = "spearman")
+})
+
+names(mood_results) <- emotions
+```
+
+### Influence on the ITI change after the stim
+```{r}
+model_df <- cleaned_data %>%
+  filter(event %in% c("before_stim", "after_stim")) %>%
+  group_by(participant_id, event, task_type, frequency, condition, comparison) %>%
+  summarise(median_tempo = median(tempo, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = event, values_from = c(median_tempo), names_prefix = "tempo_") %>%
+  mutate(median_difference = tempo_after_stim - tempo_before_stim, median_normalised_difference = (tempo_after_stim - tempo_before_stim) / tempo_before_stim )
+
+
+cleaned_data_filtered <- cleaned_data[, !colnames(cleaned_data) %in% c("timestamp", "datetime", "tempo", "Timestamp", "log_tempo", "sqrt_tempo", "event", "image")] %>% 
+  distinct()
+
+model_df <- merge(normalised_tempo, cleaned_data_filtered, by=c("participant_id", "task_type", "frequency", "condition", "comparison"))
+
+model_df <- model_df %>% 
+  mutate(
+    across(
+      .cols = Lively:Active,
+      .fns = ~ scale_mapping[.]
+    )
+  )
+
+model_df$frequency <- as.factor(model_df$frequency)
+model_df$l1 <- as.factor(model_df$l1)
+
+#testing for normal distribution
+##native language
+l1_distribution02 <- model_df %>% 
+  group_by(l1) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value))
+
+##formal training
+years_ed_distribution02 <- model_df %>% 
+  group_by(formal_education) %>% 
+  summarise(shapiro_test = list(shapiro.test(median_normalised_difference)), .groups = "drop") %>% 
+  mutate(
+    statistic = map_dbl(shapiro_test, ~ .x$statistic),
+    p_value = map_dbl(shapiro_test, ~ .x$p.value))
+
+##mood
+perform_shapiro_test02 <- function(model_df, emotions) {
+  model_df %>%
+    group_by(across(all_of(emotions))) %>%
+    summarise(
+      shapiro_test = list(shapiro.test(median_normalised_difference)),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      statistic = map_dbl(shapiro_test, ~ .x$statistic),
+      p_value = map_dbl(shapiro_test, ~ .x$p.value)
+    )
+}
+
+shapiro_results02 <- map(emotions, ~ perform_shapiro_test02(model_df, .x))
+names(shapiro_results02) <- emotions
+###in all of the factors there are not enough data points to test for normality
+
+#non parametric testing
+##native language
+kruskal.test(median_normalised_difference ~ l1, data = model_df,) #no significant influence of native language on the change
+
+##musical experience (T/F)
+wilcox.test(median_normalised_difference ~ musical_experience, data = model_df) #no significance
+
+##formal training
+cor.test(model_df$median_normalised_difference, model_df$formal_education, method = "spearman") #no significance
+
+##mood
+kruskal_results02 <- map(emotions, function(var) {
+  kruskal.test(as.formula(paste("median_normalised_difference ~", var)), data = model_df)
+})
+names(kruskal_results) <- emotions #no significance
+
+##mood (as numeric)
+mood_results02 <- map(emotions, function(var) {
+  cor.test(model_df$median_normalised_difference, model_df[[var]], method = "spearman")
+})
+
+names(mood_results02) <- emotions
+
+
+#testing for the interaction between stimulus temmpo and other factors on the change of the tempo is not possible
+#some relationships are exclusive as all of the factors are between the subjects
+```
+
