@@ -85,7 +85,7 @@ pause_text = visual.TextStim(win, text="You will be now presented with a stimulu
                                     color="white", height=40, wrapWidth=800)
 pause2_text = visual.TextStim(win, text="Now verbally describe the picture shown.\n\n Take your time and, once done, press the right arrow to progress to the next. Take as long as you want.",
                                     color="white", height=40, wrapWidth=800)   
-instruction2_text = visual.TextStim(win, text="Now again, tap the spacebar with one finger, to the beat you feel.\n\nPress 'space' to start.", 
+instruction2_text = visual.TextStim(win, text="Now again, tap the spacebar with one finger, try to replicate the previous beat.\n\nPress 'space' to start.", 
                                    color="white", height=40, wrapWidth=800)                            
 
 end_text = visual.TextStim(win, text="Thank you! The experiment is over.", color="white", height=40)
